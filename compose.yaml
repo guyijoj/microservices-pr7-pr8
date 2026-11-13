@@ -1,0 +1,95 @@
+name: bocharov-prak7
+
+x-app: &app
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: student
+      POSTGRES_PASSWORD: student
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U student -d postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: student
+      RABBITMQ_DEFAULT_PASS: student
+    ports:
+      - "127.0.0.1:5673:5672"
+      - "127.0.0.1:15673:15672"
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  orders:
+    <<: *app
+    build:
+      context: .
+      args:
+        SERVICE: orders
+    ports: ["127.0.0.1:8001:8000"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://student:student@postgres:5432/orders
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+
+  payments:
+    <<: *app
+    build:
+      context: .
+      args:
+        SERVICE: payments
+    ports: ["127.0.0.1:8002:8000"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://student:student@postgres:5432/payments
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+      ORDERS_URL: http://orders:8000
+
+  deliveries:
+    <<: *app
+    build:
+      context: .
+      args:
+        SERVICE: deliveries
+    ports: ["127.0.0.1:8003:8000"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://student:student@postgres:5432/deliveries
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+
+  notifications:
+    <<: *app
+    build:
+      context: .
+      args:
+        SERVICE: notifications
+    ports: ["127.0.0.1:8004:8000"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://student:student@postgres:5432/notifications
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+
+volumes:
+  pgdata:
+  rabbitdata:
